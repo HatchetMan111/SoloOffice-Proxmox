@@ -140,6 +140,9 @@ fi
 msg_info "${APP} Container-Installation"
 
 ensure_dns() {
+  # PVE kann /etc/resolv.conf unter dem Host-umask 077 anlegen. apts
+  # Netzwerk-Methoden laufen als _apt und koennen eine 0600-Datei nicht lesen.
+  [[ -e /etc/resolv.conf ]] && chmod 644 /etc/resolv.conf 2>/dev/null || true
   if getent hosts deb.debian.org >/dev/null 2>&1; then
     return 0
   fi
@@ -152,6 +155,7 @@ ensure_dns() {
     done
     printf 'options timeout:2 attempts:3\n'
   } > /etc/resolv.conf
+  chmod 644 /etc/resolv.conf
   for _ in $(seq 1 20); do
     getent hosts deb.debian.org >/dev/null 2>&1 && return 0
     sleep 1
