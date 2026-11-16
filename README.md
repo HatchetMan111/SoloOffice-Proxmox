@@ -53,10 +53,24 @@ sinngemäß:
 ...
 [ OK ] Dienst aktiv, Web-UI und Datenbank bereit
 
-  SoloOffice ist installiert.
-  Web-UI:       http://192.168.1.50:8080
-  Container:    CT 123 (solooffice), onboot aktiv
-  Erster Login: ersten Benutzer registrieren (wird Administrator).
+  ╭────────────────────────────────────────────────────────────╮
+  │  ✓  SoloOffice ist installiert und bereit                  │
+  ╰────────────────────────────────────────────────────────────╯
+
+  Web-UI        http://192.168.1.50:8080
+  Container     CT 123  ·  solooffice  ·  onboot aktiv
+  Version       v0.9.14b-11-g63e2de1
+
+  Erster Login
+    Web-UI öffnen und den ersten Benutzer registrieren.
+    Dieser Benutzer erhält Administratorrechte.
+
+  Schnellzugriff
+    Logs       pct exec 123 -- journalctl -u solooffice -f
+    Status     pct exec 123 -- solooffice-stack status
+    Secrets    pct exec 123 -- cat /etc/solooffice/secrets.env
+    Update     bash -c "$(wget -qLO - .../install/solooffice.sh)" -- --ctid 123 --update
+    Entfernen  bash -c "$(wget -qLO - .../install/solooffice.sh)" -- --ctid 123 --uninstall
 ```
 
 Die Web-UI ist danach unter `http://<CT-IP>:8080` erreichbar. Der erste

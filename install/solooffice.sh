@@ -418,28 +418,37 @@ verify_from_host() {
 }
 
 print_summary() {
-  local ip version
+  local ip version url update_cmd uninstall_cmd
   ip="$(pct exec "$CTID" -- hostname -I 2>/dev/null | awk '{print $1}')"
   version="$(pct exec "$CTID" -- sed -n 's/^SOLOOFFICE_VERSION=//p' /etc/solooffice/version 2>/dev/null | tail -n 1)"
-  cat <<EOF
+  url="http://${ip:-<CT-IP>}:${APP_PORT}"
+  update_cmd="bash -c \"\$(wget -qLO - ${DEPLOY_RAW}/install/solooffice.sh)\" -- --ctid ${CTID} --update"
+  uninstall_cmd="bash -c \"\$(wget -qLO - ${DEPLOY_RAW}/install/solooffice.sh)\" -- --ctid ${CTID} --uninstall"
 
-  ${APP} ist installiert.
+  printf '\n'
+  printf '  \033[1;32m╭────────────────────────────────────────────────────────────╮\033[0m\n'
+  printf '  \033[1;32m│\033[0m  \033[1;32m✓\033[0m  \033[1mSoloOffice ist installiert und bereit\033[0m                  \033[1;32m│\033[0m\n'
+  printf '  \033[1;32m╰────────────────────────────────────────────────────────────╯\033[0m\n\n'
 
-  Web-UI:       http://${ip:-<CT-IP>}:${APP_PORT}
-  Container:    CT ${CTID} (${CT_HOSTNAME}), onboot aktiv
-  Version:      ${version:-unbekannt}
-  Erster Login: ersten Benutzer registrieren (wird Administrator).
-  Secrets:      /etc/solooffice/secrets.env im Container (Modus 600)
-  Logs:         pct exec ${CTID} -- journalctl -u solooffice -f
-  Status:       pct exec ${CTID} -- solooffice-stack status
-  Update:       bash -c "\$(wget -qLO - ${DEPLOY_RAW}/install/solooffice.sh)" -- --ctid ${CTID} --update
-  Deinstall:    bash -c "\$(wget -qLO - ${DEPLOY_RAW}/install/solooffice.sh)" -- --ctid ${CTID} --uninstall
+  printf '  \033[1;36m%-13s\033[0m \033[1;4m%s\033[0m\n' 'Web-UI' "$url"
+  printf '  \033[1;36m%-13s\033[0m CT %s  ·  %s  ·  onboot aktiv\n' 'Container' "$CTID" "$CT_HOSTNAME"
+  printf '  \033[1;36m%-13s\033[0m %s\n' 'Version' "${version:-unbekannt}"
 
-  Hinweis: HTTP ist nur für das lokale Netz gedacht. Für öffentlichen Zugriff
-  einen Reverse-Proxy mit TLS davor setzen und PUBLIC_ORIGIN in
-  /etc/solooffice/config.env eintragen.
+  printf '\n  \033[1mErster Login\033[0m\n'
+  printf '    Web-UI öffnen und den ersten Benutzer registrieren.\n'
+  printf '    Dieser Benutzer erhält Administratorrechte.\n'
 
-EOF
+  printf '\n  \033[1mSchnellzugriff\033[0m\n'
+  printf '    \033[1;36m%-10s\033[0m %s\n' 'Logs' "pct exec ${CTID} -- journalctl -u solooffice -f"
+  printf '    \033[1;36m%-10s\033[0m %s\n' 'Status' "pct exec ${CTID} -- solooffice-stack status"
+  printf '    \033[1;36m%-10s\033[0m %s\n' 'Secrets' "pct exec ${CTID} -- cat /etc/solooffice/secrets.env"
+  printf '    \033[1;36m%-10s\033[0m %s\n' 'Update' "$update_cmd"
+  printf '    \033[1;36m%-10s\033[0m %s\n' 'Entfernen' "$uninstall_cmd"
+
+  printf '\n  \033[1;33mHinweis\033[0m\n'
+  printf '    HTTP ist nur für das lokale Netz gedacht. Für öffentlichen Zugriff\n'
+  printf '    einen Reverse-Proxy mit TLS davorsetzen und PUBLIC_ORIGIN in\n'
+  printf '    /etc/solooffice/config.env eintragen.\n\n'
 }
 
 uninstall_ct() {
