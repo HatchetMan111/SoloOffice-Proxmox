@@ -277,6 +277,9 @@ fetch_asset() {
 
 wait_for_ct_network() {
   msg_info "Warte auf Netzwerk und DNS im Container"
+  # PVE legt resolv.conf unter Umstaenden mit dem Host-umask 077 an; apts
+  # _apt-Benutzer braucht Lesezugriff.
+  pct exec "$CTID" -- chmod 644 /etc/resolv.conf 2>/dev/null || true
   local ready=0
   for _ in $(seq 1 60); do
     if pct exec "$CTID" -- getent hosts deb.debian.org >/dev/null 2>&1; then
