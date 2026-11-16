@@ -265,6 +265,14 @@ clone_repo() {
   fi
 
   [[ -f "$APP_DIR/docker-compose.yml" ]] || die "docker-compose.yml fehlt in ${APP_DIR}"
+
+  # Der Installer laeuft mit umask 077; git checkout erzeugt dann 0600-Dateien.
+  # Docker COPY behaelt diese Rechte, nginx laeuft aber als nginx-Benutzer.
+  msg_info "Normalisiere Dateirechte im Build-Kontext"
+  find "$APP_DIR" -type d -exec chmod 755 {} +
+  find "$APP_DIR" -type f ! -name '.env*' -exec chmod 644 {} +
+  find "$APP_DIR" -type f ! -name '.env*' -perm /111 -exec chmod 755 {} +
+
   msg_ok "Code-Stand: $(git -C "$APP_DIR" rev-parse --short HEAD)"
 }
 
