@@ -164,12 +164,19 @@ ensure_dns() {
   die "DNS im Container funktioniert nicht (deb.debian.org nicht auflösbar)"
 }
 
+apt_get() {
+  # In manchen unprivileged LXC-Containern kann der apt-Sandbox-Benutzer
+  # _apt nicht aufloesen, waehrend root problemlos DNS nutzt. Die Methoden
+  # laufen deshalb im isolierten Container als root.
+  apt-get -o APT::Sandbox::User=root -o Acquire::Retries=3 "$@"
+}
+
 install_base_packages() {
   export DEBIAN_FRONTEND=noninteractive
   msg_info "Paketlisten aktualisieren"
-  apt-get update
+  apt_get update
   msg_info "Basis-Pakete installieren"
-  apt-get install -y --no-install-recommends \
+  apt_get install -y --no-install-recommends \
     ca-certificates curl gnupg git jq openssl fuse-overlayfs
   msg_ok "Basis-Pakete installiert"
 }
@@ -188,8 +195,8 @@ install_docker() {
     codename="$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-bookworm}")"
     printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian %s stable\n' \
       "$arch" "$codename" > /etc/apt/sources.list.d/docker.list
-    apt-get update
-    apt-get install -y --no-install-recommends \
+    apt_get update
+    apt_get install -y --no-install-recommends \
       docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     msg_ok "Docker CE installiert"
   fi
