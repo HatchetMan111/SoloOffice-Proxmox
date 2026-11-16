@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+#
+# solooffice-env - erzeugt die Compose-Env-Dateien aus den Betriebsdaten.
+#
+# Die Dateien liegen im Projektverzeichnis, weil docker compose sie dort
+# erwartet. Die eigentlichen Geheimnisse bleiben in /etc/solooffice.
+#
+set -euo pipefail
+umask 077
+
+CONFIG_FILE="/etc/solooffice/config.env"
+SECRETS_FILE="/etc/solooffice/secrets.env"
+APP_DIR="/opt/solooffice"
+INSTANCE="solooffice"
+
+die() { printf '\033[1;31m[FAIL]\033[0m %s\n' "$*" >&2; exit 1; }
+
+load_env_file() {
+  local file="$1" line key val
+  [[ -r "$file" ]] || die "Fehlt: ${file}"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    if [[ "$val" == \"*\" && "$val" == *\" ]]; then
+      val="${val:1:${#val}-2}"
+    elif [[ "$val" == \'*\' && "$val" == *\' ]]; then
+      val="${val:1:${#val}-2}"
+    fi
+    printf -v "$key" '%s' "$val"
+  done <"$file"
+}
+
+[[ -r "$CONFIG_FILE" ]] || die "Fehlt: ${CONFIG_FILE}"
+[[ -r "$SECRETS_FILE" ]] || die "Fehlt: ${SECRETS_FILE}"
+[[ -d "$APP_DIR" ]] || die "Fehlt: ${APP_DIR}"
+
+tracing=0
+[[ "$-" == *x* ]] && tracing=1
+set +x
+
+load_env_file "$CONFIG_FILE"
+load_env_file "$SECRETS_FILE"
+
+APP_PORT="${APP_PORT:-8080}"
+AUTO_ORIGIN="${AUTO_ORIGIN:-1}"
+PUBLIC_ORIGIN="${PUBLIC_ORIGIN:-}"
+TRUST_PROXY="${TRUST_PROXY:-1}"
+REGISTRATION_MODE="${REGISTRATION_MODE:-closed-after-first}"
+REQUIRE_EMAIL_VERIFICATION="${REQUIRE_EMAIL_VERIFICATION:-false}"
+LOG_LEVEL="${LOG_LEVEL:-WARN}"
+OCR_CONCURRENCY_LIMIT="${OCR_CONCURRENCY_LIMIT:-2}"
+OCR_TIMEOUT_MS="${OCR_TIMEOUT_MS:-120000}"
+
+[[ "$APP_PORT" =~ ^[0-9]+$ ]] && (( APP_PORT >= 1 && APP_PORT <= 65535 )) \
+  || die "Ungültiger APP_PORT: ${APP_PORT}"
+[[ "$AUTO_ORIGIN" == "0" || "$AUTO_ORIGIN" == "1" ]] || die "AUTO_ORIGIN muss 0 oder 1 sein"
+[[ "$TRUST_PROXY" =~ ^[0-9]+$ ]] || die "TRUST_PROXY muss eine Zahl sein (1 direkt, 2 mit Reverse-Proxy)"
+[[ "$OCR_CONCURRENCY_LIMIT" =~ ^[0-9]+$ ]] || die "OCR_CONCURRENCY_LIMIT muss eine Zahl sein"
+[[ "$OCR_TIMEOUT_MS" =~ ^[0-9]+$ ]] || die "OCR_TIMEOUT_MS muss eine Zahl sein"
+[[ -n "${POSTGRES_PASSWORD:-}" ]] || die "POSTGRES_PASSWORD fehlt in ${SECRETS_FILE}"
+[[ -n "${ENCRYPTION_KEY:-}" ]] || die "ENCRYPTION_KEY fehlt in ${SECRETS_FILE}"
+[[ "${#ENCRYPTION_KEY}" -eq 64 && "$ENCRYPTION_KEY" =~ ^[0-9a-fA-F]+$ ]] \
+  || die "ENCRYPTION_KEY muss 64 Hex-Zeichen haben (in ${SECRETS_FILE})"
+
+origin="$PUBLIC_ORIGIN"
+if [[ -z "$origin" && "$AUTO_ORIGIN" == "1" ]]; then
+  ip="$(hostname -I 2>/dev/null | tr ' ' '\n' | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && $0 !~ /^127\./ && $0 !~ /^169\.254\./ {print; exit}')"
+  [[ -n "$ip" ]] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  origin="http://${ip:-127.0.0.1}:${APP_PORT}"
+fi
+[[ -n "$origin" ]] || origin="http://127.0.0.1:${APP_PORT}"
+[[ "${SMTP_PORT:-587}" =~ ^[0-9]+$ ]] || die "SMTP_PORT muss eine Zahl sein"
+origin="${origin%/}"
+
+dotenv_quote() {
+  local v="$1"
+  case "$v" in
+    *$'\n'*|*$'\r'*) die "Env-Wert enthält einen Zeilenumbruch" ;;
+  esac
+  v="${v//\\/\\\\}"
+  v="${v//\"/\\\"}"
+  v="${v//\$/\\\$}"
+  printf '"%s"' "$v"
+}
+
+[[ "$origin" =~ ^https?://[^/?#[:space:]]+$ ]] \
+  || die "Ungültige Origin: ${origin} (nur Schema, Host und Port erlaubt)"
+case "$origin" in
+  *"'"*|*'"'*|*'<'*|*'>'*|*'`'*|*'$'*) die "Origin enthält unerlaubte Zeichen: ${origin}" ;;
+esac
+
+if [[ -n "${COOKIE_SECURE:-}" ]]; then
+  cookie_secure="$COOKIE_SECURE"
+elif [[ "$origin" == https://* ]]; then
+  cookie_secure="true"
+else
+  cookie_secure="false"
+fi
+
+hsts="false"
+[[ "$cookie_secure" == "true" ]] && hsts="true"
+
+q_pg="$(dotenv_quote "$POSTGRES_PASSWORD")"
+q_key="$(dotenv_quote "$ENCRYPTION_KEY")"
+q_smtp_host="$(dotenv_quote "${SMTP_HOST:-}")"
+q_smtp_user="$(dotenv_quote "${SMTP_USER:-}")"
+q_smtp_pass="$(dotenv_quote "${SMTP_PASS:-}")"
+q_email_from="$(dotenv_quote "${EMAIL_FROM:-}")"
+q_email_from_name="$(dotenv_quote "${EMAIL_FROM_NAME:-SoloOffice}")"
+
+tmp_compose="$(mktemp "${APP_DIR}/.env.${INSTANCE}.XXXXXX")"
+tmp_backend="$(mktemp "${APP_DIR}/.env.backend.${INSTANCE}.XXXXXX")"
+cleanup() { rm -f "$tmp_compose" "$tmp_backend"; }
+trap cleanup EXIT
+
+cat >"$tmp_compose" <<EOF
+COMPOSE_PROJECT_NAME=solooffice
+INSTANCE_NAME=${INSTANCE}
+FRONTEND_PORT=${APP_PORT}
+POSTGRES_DB=solooffice
+POSTGRES_USER=solooffice
+POSTGRES_PASSWORD=${q_pg}
+ENCRYPTION_KEY=${q_key}
+CORS_ORIGIN=${origin}
+COOKIE_SECURE=${cookie_secure}
+COOKIE_SAME_SITE=lax
+TRUST_PROXY=${TRUST_PROXY}
+ENABLE_HSTS=${hsts}
+REGISTRATION_MODE=${REGISTRATION_MODE}
+REQUIRE_EMAIL_VERIFICATION=${REQUIRE_EMAIL_VERIFICATION}
+LOG_LEVEL=${LOG_LEVEL}
+OCR_CONCURRENCY_LIMIT=${OCR_CONCURRENCY_LIMIT}
+OCR_TIMEOUT_MS=${OCR_TIMEOUT_MS}
+SMTP_HOST=${q_smtp_host}
+SMTP_PORT=${SMTP_PORT:-587}
+SMTP_SECURE=${SMTP_SECURE:-false}
+SMTP_USER=${q_smtp_user}
+SMTP_PASS=${q_smtp_pass}
+EMAIL_FROM=${q_email_from}
+EMAIL_FROM_NAME=${q_email_from_name}
+EOF
+
+cat >"$tmp_backend" <<EOF
+PORT=3001
+DB_HOST=database
+DB_PORT=5432
+DB_NAME=solooffice
+DB_USER=solooffice
+DB_PASSWORD=${q_pg}
+NODE_ENV=production
+CORS_ORIGIN=${origin}
+COOKIE_SECURE=${cookie_secure}
+COOKIE_SAME_SITE=lax
+TRUST_PROXY=${TRUST_PROXY}
+ENABLE_HSTS=${hsts}
+ENCRYPTION_KEY=${q_key}
+REGISTRATION_MODE=${REGISTRATION_MODE}
+REQUIRE_EMAIL_VERIFICATION=${REQUIRE_EMAIL_VERIFICATION}
+APP_BASE_URL=${origin}
+LOG_LEVEL=${LOG_LEVEL}
+OCR_CONCURRENCY_LIMIT=${OCR_CONCURRENCY_LIMIT}
+OCR_TIMEOUT_MS=${OCR_TIMEOUT_MS}
+SMTP_HOST=${q_smtp_host}
+SMTP_PORT=${SMTP_PORT:-587}
+SMTP_SECURE=${SMTP_SECURE:-false}
+SMTP_USER=${q_smtp_user}
+SMTP_PASS=${q_smtp_pass}
+EMAIL_FROM=${q_email_from}
+EMAIL_FROM_NAME=${q_email_from_name}
+EOF
+
+chmod 600 "$tmp_compose" "$tmp_backend"
+mv -f "$tmp_compose" "${APP_DIR}/.env.${INSTANCE}"
+mv -f "$tmp_backend" "${APP_DIR}/.env.backend.${INSTANCE}"
+trap - EXIT
+
+printf 'SoloOffice-Env geschrieben: %s\n' "$origin"
+[[ "$tracing" == "1" ]] && set -x
+exit 0

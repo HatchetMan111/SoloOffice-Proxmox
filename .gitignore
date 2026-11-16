@@ -1,0 +1,8 @@
+*.log
+.env
+.env.*
+!.env.example
+backups/
+tmp/
+.DS_Store
+docs/test-evidence.local.md

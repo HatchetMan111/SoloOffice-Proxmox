@@ -1,0 +1,25 @@
+[Unit]
+Description=SoloOffice - Rechnungen, Kunden und EÜR (Docker Compose)
+Documentation=https://github.com/HatchetMan111/solooffice-proxmox
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/solooffice
+Environment=COMPOSE_PROJECT_NAME=solooffice
+Environment=HOME=/root
+ExecStartPre=/usr/local/bin/solooffice-env
+ExecStart=/usr/local/bin/solooffice-stack up
+ExecStop=/usr/local/bin/solooffice-stack down
+Restart=always
+RestartSec=10
+TimeoutStartSec=900
+TimeoutStopSec=120
+UMask=0027
+NoNewPrivileges=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
